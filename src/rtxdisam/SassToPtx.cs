@@ -99,6 +99,12 @@ public static class SassToPtx
             _sharedOperandConstants = new();
         private readonly Dictionary<int, string> _jumpTableLabels = new();
         private readonly HashSet<int> _skipNodes = new();
+        // Continue point pushed by PCNT (sm_5x) / BSSY (sm_7x+) that a
+        // following CONT conditionally branches to.  sm_5x encodes the
+        // target on the push instruction, not on CONT itself.
+        private string? _continuePoint;
+        // Break point pushed by PBK that a following BRK branches to.
+        private string? _breakPoint;
         // Deferred high halves of a folded 64-bit add, keyed by the node
         // index of the .X instruction that completes the pair.
         private readonly Dictionary<int, (string Low, string High, string Pair)>
@@ -8781,7 +8787,9 @@ public static class SassToPtx
                     // reconvergence information the lift needs.
                     return;
                 case "BSSY":
-                    _ = BranchLabel(instruction);
+                    // Push the reconvergence point that a later CONT
+                    // branches to.
+                    _continuePoint = BranchLabel(instruction);
                     return;
                 case "WARPSYNC":
                     _lines.Add($"{Prefix()}bar.warp.sync 0xffffffff;");
@@ -9044,10 +9052,22 @@ public static class SassToPtx
                     return;
                 }
                 case "PBK":
+                    // Push the loop break point; the matching BRK branches
+                    // here.  The push itself does not transfer control.
+                    _breakPoint = BranchLabel(instruction);
+                    return;
                 case "PCNT":
-                    // Pop-branch/pop-continue transfer control to the target
-                    // recorded by the matching loop construct.
-                    _lines.Add($"{Prefix()}bra {BranchLabel(instruction)};");
+                    // Push the loop continue point; the matching CONT
+                    // branches here.  The push itself does not transfer
+                    // control.
+                    _continuePoint = BranchLabel(instruction);
+                    return;
+                case "CONT":
+                    // Conditional continue: branch to the point pushed by
+                    // the enclosing PCNT/BSSY.  On sm_5x the target lives on
+                    // the push instruction, so CONT carries no label.
+                    if (!string.IsNullOrEmpty(_continuePoint))
+                        _lines.Add($"{Prefix()}bra {_continuePoint};");
                     return;
                 case "EXIT":
                 case "RET":
@@ -9094,9 +9114,13 @@ public static class SassToPtx
                     return;
                 case "BPT":
                 case "BREAK":
-                case "BRK":
-                    // CUDA lowers brkpt/assert traps to BPT/BREAK/BRK.
+                    // CUDA lowers brkpt/assert traps to BPT/BREAK.
                     _lines.Add($"{Prefix()}brkpt;");
+                    return;
+                case "BRK":
+                    // Loop break: branch to the point pushed by PBK.
+                    if (!string.IsNullOrEmpty(_breakPoint))
+                        _lines.Add($"{Prefix()}bra {_breakPoint};");
                     return;
                 default:
                     throw new NotSupportedException(
