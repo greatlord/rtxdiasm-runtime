@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>rtxdisam</AssemblyName>
+    <RootNamespace>rtxdisam.cli</RootNamespace>
+    <UseAppHost>true</UseAppHost>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\rtxdisam\rtxdisam.csproj" />
+  </ItemGroup>
+
+</Project>
