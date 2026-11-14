@@ -32,16 +32,12 @@ public static class RtxDisamApi
             throw new ArgumentOutOfRangeException(nameof(output));
 
         EnsureTables();
-        // A container that carries PTX text should be used verbatim when
-        // there is no SASS image for the requested device.  Real CUDA
-        // JIT-compiles the fatbin's PTX in that case: an sm_10..sm_30
-        // cubin is not a match for an sm_86 device, so lifting the old
-        // SASS would be both slower and less faithful.  PTX-only fatbins
-        // keep the previous behaviour; mixed fatbins now follow the same
-        // JIT rule instead of unconditionally preferring an older cubin.
+        // A C#-only container path must also accept a fatbin that carries
+        // PTX instead of SASS: there is nothing to lift, so return the
+        // member text.  Only take this path when the container has no
+        // cubin, so mixed fatbins keep the existing cubin-first lift.
         if ((output & RtxDisamOutput.Ptx) != 0 && FatbinFile.IsFatbin(data) &&
-            (!HasCubinMember(data) ||
-             !HasExactCubinMember(data, selectionTarget ?? target)))
+            !HasCubinMember(data))
         {
             string? fatbinPtx = SelectFatbinPtx(data, entry);
             if (fatbinPtx != null)
@@ -266,34 +262,6 @@ public static class RtxDisamApi
             offset += advance;
         }
         return false;
-    }
-
-    // True when the fatbin carries a cubin whose architecture is exactly
-    // the requested SM.  An older cubin is deliberately not a match: the
-    // caller's device would have JIT-compiled the fatbin's PTX instead of
-    // running a mismatched SASS image.
-    private static bool HasExactCubinMember(byte[] data, string? target)
-    {
-        if (string.IsNullOrEmpty(target) || !FatbinFile.IsFatbin(data))
-            return false;
-        int wanted = ParseTargetArchitecture(target);
-        if (wanted <= 0)
-            return false;
-        try
-        {
-            FatbinFile fatbin = FatbinFile.Parse(data);
-            foreach (FatbinEntry candidate in fatbin.Entries)
-            {
-                if (candidate.IsCubin &&
-                    candidate.Architecture == (uint)wanted)
-                    return true;
-            }
-            return false;
-        }
-        catch
-        {
-            return false;
-        }
     }
 
     // Return a fatbin PTX member verbatim.  Prefer the member that names
