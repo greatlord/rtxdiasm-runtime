@@ -60,6 +60,7 @@ public static class RtxDisamApi
             // constants (sin/cos range reduction), bank 4 launch-size
             // descriptors and function tables.
             byte[]? bank2 = ExtractConstantBank(selectedData, entry, 2);
+            byte[]? bank3 = ExtractConstantBank(selectedData, entry, 3);
             byte[]? bank4 = ExtractConstantBank(selectedData, entry, 4);
             IReadOnlyDictionary<int, string>? texrefs =
                 ExtractTextureRefs(selectedData, entry);
@@ -70,7 +71,8 @@ public static class RtxDisamApi
                 target, emitFunctions, sharedBytes,
                 MakeWordResolver(bank2), bank2?.Length ?? 0,
                 MakeWordResolver(bank4), bank4?.Length ?? 0,
-                texrefs, globalImages);
+                texrefs, globalImages,
+                MakeWordResolver(bank3), bank3?.Length ?? 0);
         }
         if ((output & RtxDisamOutput.Sass) == 0)
             sass = null;
@@ -547,7 +549,8 @@ public static class RtxDisamApi
         Func<int, uint?>? constant2Resolver = null, int constant2Bytes = 0,
         Func<int, uint?>? constant4Resolver = null, int constant4Bytes = 0,
         IReadOnlyDictionary<int, string>? texrefs = null,
-        IReadOnlyDictionary<int, PtxGlobalImage>? globalImages = null)
+        IReadOnlyDictionary<int, PtxGlobalImage>? globalImages = null,
+        Func<int, uint?>? constant3Resolver = null, int constant3Bytes = 0)
     {
         string[] lines = sass.Replace("\r", "", StringComparison.Ordinal)
             .Split('\n');
@@ -607,7 +610,8 @@ public static class RtxDisamApi
         return SassToPtx.Translate(
             selected, name, parameters, selectedTarget, null, sharedBytes,
             constant2Resolver, constant2Bytes, emitFunctions, allSections,
-            constant4Resolver, constant4Bytes, texrefs, globalImages);
+            constant4Resolver, constant4Bytes, texrefs, globalImages,
+            constant3Resolver, constant3Bytes);
     }
 
     private static Func<int, uint?>? MakeWordResolver(byte[]? data)

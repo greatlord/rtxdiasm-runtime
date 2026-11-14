@@ -31,12 +31,14 @@ public static class SassToPtx
         IReadOnlyList<SassSection>? linkedSections = null,
         Func<int, uint?>? constant4Resolver = null, int constant4Bytes = 0,
         IReadOnlyDictionary<int, string>? texrefs = null,
-        IReadOnlyDictionary<int, PtxGlobalImage>? globalImages = null)
+        IReadOnlyDictionary<int, PtxGlobalImage>? globalImages = null,
+        Func<int, uint?>? constant3Resolver = null, int constant3Bytes = 0)
     {
         var emitter = new Emitter(
             section, entry, parameters, target, constantResolver, sharedBytes,
             constant2Resolver, constant2Bytes, emitFunctions, linkedSections,
-            constant4Resolver, constant4Bytes, texrefs, globalImages);
+            constant4Resolver, constant4Bytes, texrefs, globalImages,
+            constant3Resolver, constant3Bytes);
         return emitter.Run();
     }
 
@@ -53,6 +55,8 @@ public static class SassToPtx
         private readonly int _constant2Bytes;
         private readonly Func<int, uint?>? _constant4Resolver;
         private readonly int _constant4Bytes;
+        private readonly Func<int, uint?>? _constant3Resolver;
+        private readonly int _constant3Bytes;
         private readonly IReadOnlyDictionary<int, PtxGlobalImage> _globalImages;
         private bool _usesTrigSlowpath;
         private readonly bool _emitFunctions;
@@ -234,7 +238,8 @@ public static class SassToPtx
             IReadOnlyList<SassSection>? linkedSections = null,
             Func<int, uint?>? constant4Resolver = null, int constant4Bytes = 0,
             IReadOnlyDictionary<int, string>? texrefs = null,
-            IReadOnlyDictionary<int, PtxGlobalImage>? globalImages = null)
+            IReadOnlyDictionary<int, PtxGlobalImage>? globalImages = null,
+            Func<int, uint?>? constant3Resolver = null, int constant3Bytes = 0)
         {
             _section = section;
             _entry = entry;
@@ -247,6 +252,8 @@ public static class SassToPtx
             _constant2Bytes = constant2Bytes;
             _constant4Resolver = constant4Resolver;
             _constant4Bytes = constant4Bytes;
+            _constant3Resolver = constant3Resolver;
+            _constant3Bytes = constant3Bytes;
             _globalImages = globalImages ??
                 new Dictionary<int, PtxGlobalImage>();
             _emitFunctions = emitFunctions;
@@ -17149,12 +17156,15 @@ public static class SassToPtx
             Func<int, uint?>? resolver = bank switch
             {
                 2 => _constant2Resolver,
+                3 => _constant3Resolver,
                 4 => _constant4Resolver,
                 _ => null,
             };
             if (resolver == null || offset < 0)
                 return null;
             if (bank == 2 && offset + 4 > _constant2Bytes)
+                return null;
+            if (bank == 3 && offset + 4 > _constant3Bytes)
                 return null;
             if (bank == 4 && offset + 4 > _constant4Bytes)
                 return null;
