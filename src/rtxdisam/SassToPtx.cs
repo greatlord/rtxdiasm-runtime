@@ -10025,6 +10025,10 @@ public static class SassToPtx
                     $"SASS instruction '{instruction.Mnemonic}' needs two operands");
             string destination = instruction.Operands[0].Trim();
             string source = instruction.Operands[1].Trim();
+            // RZ reads as the constant zero, so c[bank][RZ] is a direct
+            // load at offset 0, not a dynamic index.
+            source = Regex.Replace(source, @"\[RZ\]$", "[0x0]",
+                RegexOptions.IgnoreCase);
             Match constant = Regex.Match(source,
                 @"^c\[0x([0-9A-Fa-f]+)\]\[0x([0-9A-Fa-f]+)\]$",
                 RegexOptions.IgnoreCase);
