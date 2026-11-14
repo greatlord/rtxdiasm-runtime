@@ -345,7 +345,13 @@ public sealed class CubinFile
                     symbolIndex = (uint)(relocationInfo >> 8);
                     relocationType = (uint)(relocationInfo & 0xFF);
                 }
-                if (relocationOffset >= section.Size)
+                // Relocations may legitimately point past the section payload.
+                // CUDA appends the texture-header table after .nv.constant0,
+                // and the STT_CUDA_TEXTURE descriptors are relocated at
+                // offsets just beyond the declared section size (e.g. 404..416
+                // for a 404-byte .nv.constant0).  Dropping those would lose the
+                // TLD/TLDS texref mapping entirely.
+                if (relocationOffset > section.Size + 0x1000)
                     continue;
 
                 if (!symbolMap.TryGetValue(symbolIndex, out CubinSymbol? symbol))
