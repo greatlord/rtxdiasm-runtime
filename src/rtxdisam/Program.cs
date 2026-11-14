@@ -2104,12 +2104,14 @@ internal static partial class Program
                 }
                 else if (item.Instruction.BranchTarget is ulong target)
                 {
-                    if (IsInstructionAddress(section, target))
+                    ulong labelTarget =
+                        SnapToInstructionAddress(section, target);
+                    if (IsInstructionAddress(section, labelTarget))
                     {
-                        ulong targetOffset = target - section.Address;
+                        ulong targetOffset = labelTarget - section.Address;
                         if (functionLabels.TryGetValue(targetOffset, out string? targetFunction))
                             text = ReplaceTarget(text, target, targetFunction);
-                        else if (localLabels.TryGetValue((section, target), out string? targetLocal))
+                        else if (localLabels.TryGetValue((section, labelTarget), out string? targetLocal))
                             text = ReplaceTarget(text, target, targetLocal);
                     }
                     else if (globalSymbols.TryGetValue(target, out string? targetSymbol))
@@ -2342,6 +2344,9 @@ internal static partial class Program
 
                 if (item.Instruction.BranchTarget is not ulong target)
                     continue;
+                if (!IsInstructionAddress(section, target))
+                    continue;
+                target = SnapToInstructionAddress(section, target);
                 if (!IsInstructionAddress(section, target))
                     continue;
                 if (functionStarts.Contains(target) ||
@@ -2955,6 +2960,21 @@ internal static partial class Program
         address >= section.Address &&
         address < section.Address + section.Size &&
         (address - section.Address) % (section.PreVolta ? 8UL : 16UL) == 0;
+
+    // PreVolta bundles are 64 bytes: seven 8-byte instructions followed
+    // by an 8-byte control word.  A PBK/BRK target can encode the
+    // control-word slot, which carries no instruction to attach a label
+    // to.  Move it to the first instruction of the next bundle, which is
+    // where the branch actually resumes.
+    private static ulong SnapToInstructionAddress(
+        CubinSection section, ulong address)
+    {
+        if (!section.PreVolta || address < section.Address)
+            return address;
+        return (address - section.Address) % 64 == 0
+            ? address + 8
+            : address;
+    }
 
     internal static bool TryGetR1Local(
         string text, out string key, out int width, out bool store)
