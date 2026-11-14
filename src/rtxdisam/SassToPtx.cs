@@ -9006,6 +9006,13 @@ public static class SassToPtx
                 case "DEPBAR":
                     _lines.Add($"{Prefix()}membar.cta;");
                     return;
+                case "NANOSLEEP":
+                    // Back-off sleep hint (CUB's decoupled-lookback scan
+                    // spins on it).  PTX keeps the form for validation;
+                    // the compiler drops it, which changes no result.
+                    _lines.Add($"{Prefix()}nanosleep.u32 " +
+                        $"{Operand(instruction.Operands[0].Trim())};");
+                    return;
                 case "TEXDEPBAR":
                     // Texture dependency barriers have no PTX equivalent.
                     // Texture instructions are outside the lifted subset, so
@@ -14608,14 +14615,6 @@ public static class SassToPtx
         {
             string destination = Reg(instruction.Operands[0]);
             string special = instruction.Operands[1].Trim().ToUpperInvariant();
-            if (special == "SR_LEMASK")
-            {
-                // Lane mask of lanes 0..lane (PTX %lanemask_le).  This is
-                // what ptxas uses to lower __popc(getLaneMaskLe() & vote)
-                // in warp prefix scans; it is not the active-lane mask.
-                _lines.Add($"{prefix}mov.u32 {destination}, %lanemask_le;");
-                return;
-            }
             _lines.Add($"{prefix}mov.u32 {destination}, " +
                 $"{SpecialToPtx(special, instruction.Operands[1])};");
         }
@@ -14737,6 +14736,10 @@ public static class SassToPtx
                 "SR_NCTAID.Z" => "%nctaid.z",
                 "SR_LANEID" => "%laneid",
                 "SR_LTMASK" => "%lanemask_lt",
+                "SR_LEMASK" => "%lanemask_le",
+                "SR_GEMASK" => "%lanemask_ge",
+                "SR_GTMASK" => "%lanemask_gt",
+                "SR_EQMASK" => "%lanemask_eq",
                 "SR_CLOCKLO" => "%clock",
                 _ => throw new NotSupportedException(
                     $"S2R special register '{original}' is not supported"),
