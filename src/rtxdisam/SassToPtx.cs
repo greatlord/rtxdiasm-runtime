@@ -10470,8 +10470,11 @@ public static class SassToPtx
             else if (mnemonic.Contains(".F16.F16", StringComparison.Ordinal))
                 conversion = $"cvt.{rnd}{ftzs}.f16.f16";
             else
-                throw new NotSupportedException(
-                    $"SASS instruction '{instruction.Mnemonic}' is not supported");
+                // A bare `F2F.FTZ.RM` (sm_30) is a float-to-float
+                // re-round.  Source and destination are both f32, so
+                // the rounding mode is a no-op and only FTZ remains
+                // observable: `cvt.ftz.f32.f32` is the exact PTX form.
+                conversion = $"cvt{ftzs}.f32.f32";
             // A 64-bit source/destination is a register pair, not one
             // b32 register: `cvt.rn.f32.f64 %r8, %r8` otherwise reads
             // only the low word and fails the type check.
