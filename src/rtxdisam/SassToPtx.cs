@@ -8822,6 +8822,9 @@ public static class SassToPtx
                 case "UBMSK":
                     EmitUbmsk(instruction, Prefix());
                     return;
+                case "UFLO":
+                    EmitUflo(instruction, Prefix());
+                    return;
                 case "SGXT":
                     EmitSgxt(instruction, Prefix());
                     return;
@@ -13106,7 +13109,7 @@ public static class SassToPtx
             string width = LoadWidth(instruction.Mnemonic);
             int vectorCount = VectorCount(width);
             string destination = vectorCount > 0
-                ? VectorRegs(instruction.Operands[0], vectorCount)
+                ? VectorRegs(instruction.Operands[0], vectorCount, true)
                 : IsRz(instruction.Operands[0])
                     ? $"%rt{_nextTemp++}"
                     : Reg(instruction.Operands[0]);
@@ -13136,7 +13139,8 @@ public static class SassToPtx
                     if (!vec.Success)
                         throw new NotSupportedException(
                             $"expected vector register base, got " +
-                            $"'{instruction.Operands[0]}'");
+                            $"'{instruction.Operands[0]}' in " +
+                            $"{instruction.Mnemonic}");
                     int first = int.Parse(vec.Groups[1].Value,
                         CultureInfo.InvariantCulture);
                     var temps = new string[vectorCount];
@@ -13188,7 +13192,7 @@ public static class SassToPtx
             string width = LoadWidth(instruction.Mnemonic);
             int vectorCount = VectorCount(width);
             string source = vectorCount > 0
-                ? VectorRegs(instruction.Operands[1], vectorCount)
+                ? VectorRegs(instruction.Operands[1], vectorCount, true)
                 : Operand(instruction.Operands[1]);
             string? guardLabel;
             prefix = GuardedPrefix(prefix, out guardLabel) ?? "";
@@ -13782,7 +13786,7 @@ public static class SassToPtx
             string width = LoadWidth(instruction.Mnemonic);
             int vectorCount = VectorCount(width);
             string source = vectorCount > 0
-                ? VectorRegs(instruction.Operands[1], vectorCount)
+                ? VectorRegs(instruction.Operands[1], vectorCount, true)
                 : Operand(instruction.Operands[1]);
             string space = shared ? "shared" : "global";
             // A predicated store has no destination to preserve, so keep
@@ -13794,14 +13798,26 @@ public static class SassToPtx
             // predicated vector store into scalar predicated stores.
             if (!string.IsNullOrEmpty(prefix) && vectorCount > 0)
             {
-                Match baseMatch = Regex.Match(instruction.Operands[1].Trim(),
+                string sourceText = instruction.Operands[1].Trim();
+                Match baseMatch = Regex.Match(sourceText,
                     @"^R(\d+)$", RegexOptions.IgnoreCase);
-                if (!baseMatch.Success)
+                bool zeroSource = sourceText.Equals("RZ",
+                    StringComparison.OrdinalIgnoreCase);
+                if (!baseMatch.Success && !zeroSource)
                     throw new NotSupportedException(
                         $"expected vector register base, got " +
-                        $"'{instruction.Operands[1]}'");
-                int first = int.Parse(baseMatch.Groups[1].Value,
-                    CultureInfo.InvariantCulture);
+                        $"'{instruction.Operands[1]}' in " +
+                        $"{instruction.Mnemonic}");
+                int first = baseMatch.Success
+                    ? int.Parse(baseMatch.Groups[1].Value,
+                        CultureInfo.InvariantCulture)
+                    : -1;
+                string zeroValue = "";
+                if (zeroSource)
+                {
+                    zeroValue = $"%rt{_nextTemp++}";
+                    _lines.Add($"    mov.b32 {zeroValue}, 0;");
+                }
                 // LoadWidth maps .64/.128 to v2/v4.u32, so every
                 // component is a 4-byte word.
                 const int elementBytes = 4;
@@ -13810,7 +13826,7 @@ public static class SassToPtx
                     _lines.Add(
                         $"{prefix}st.{space}.u32 " +
                         $"{AddAddressOffset(address, i * elementBytes)}, " +
-                        $"{Reg($"R{first + i}")};");
+                        $"{(first >= 0 ? Reg($"R{first + i}") : zeroValue)};");
                 }
                 return;
             }
@@ -14159,13 +14175,32 @@ public static class SassToPtx
             : width.StartsWith("v2", StringComparison.Ordinal) ? 2
             : 0;
 
-        private string VectorRegs(string operand, int count)
+        private string VectorRegs(string operand, int count,
+                                  bool allowZero = false)
         {
+            if (allowZero &&
+                operand.Trim().Equals("RZ", StringComparison.OrdinalIgnoreCase))
+            {
+                // A vector store from RZ writes zeros; a vector load to RZ
+                // discards the values.  Materialise a scratch vector (the
+                // PTX backend does not accept a literal vector).
+                var zeros = new List<string>(count);
+                for (int i = 0; i < count; i++)
+                {
+                    string temp = $"%rt{_nextTemp++}";
+                    _lines.Add($"    mov.b32 {temp}, 0;");
+                    zeros.Add(temp);
+                }
+                return "{" + string.Join(", ", zeros) + "}";
+            }
             Match match = Regex.Match(operand.Trim(), @"^R(\d+)$",
                 RegexOptions.IgnoreCase);
             if (!match.Success)
                 throw new NotSupportedException(
-                    $"expected vector register base, got '{operand}'");
+                    $"expected vector register base, got '{operand}'" +
+                    (_currentInstruction != null
+                        ? $" in {_currentInstruction.Mnemonic}"
+                        : ""));
             int first = int.Parse(match.Groups[1].Value,
                 CultureInfo.InvariantCulture);
             var registers = new List<string>(count);
@@ -15287,6 +15322,22 @@ public static class SassToPtx
                 $"{Operand(instruction.Operands[1])}, " +
                 $"{Operand(instruction.Operands[3])}, " +
                 $"{Operand(instruction.Operands[2])};");
+        }
+
+        // Uniform-datapath FLO.U32: same highest-set-bit index as FLO, but
+        // the operands live in the UR bank (materialized as %urN scalars).
+        private void EmitUflo(SassInstruction instruction, string prefix)
+        {
+            if (instruction.Operands.Count != 2 ||
+                !instruction.Mnemonic.Contains(
+                    ".U32", StringComparison.OrdinalIgnoreCase))
+                throw new NotSupportedException(
+                    $"SASS instruction '{instruction.Mnemonic}' is not supported");
+            string destination = UniformOperand(instruction.Operands[0]);
+            string source = UniformOperand(instruction.Operands[1]);
+            string leading = $"%rt{_nextTemp++}";
+            _lines.Add($"    clz.b32 {leading}, {source};");
+            _lines.Add($"{prefix}sub.u32 {destination}, 31, {leading};");
         }
 
         private void EmitFlo(SassInstruction instruction, string prefix)
