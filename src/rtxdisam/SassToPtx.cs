@@ -14576,9 +14576,10 @@ public static class SassToPtx
             string special = instruction.Operands[1].Trim().ToUpperInvariant();
             if (special == "SR_LEMASK")
             {
-                // Lane-enable mask: the set of currently active lanes
-                // (PTX activemask).
-                _lines.Add($"{prefix}activemask.b32 {destination};");
+                // Lane mask of lanes 0..lane (PTX %lanemask_le).  This is
+                // what ptxas uses to lower __popc(getLaneMaskLe() & vote)
+                // in warp prefix scans; it is not the active-lane mask.
+                _lines.Add($"{prefix}mov.u32 {destination}, %lanemask_le;");
                 return;
             }
             _lines.Add($"{prefix}mov.u32 {destination}, " +
@@ -15547,16 +15548,34 @@ public static class SassToPtx
                 string mode = mnemonic.Contains(".ANY", StringComparison.Ordinal) ? "any"
                     : mnemonic.Contains(".UNI", StringComparison.Ordinal) ? "uni"
                     : "all";
+                string source = VoteSource(instruction.Operands[1]);
                 _lines.Add($"{prefix}vote.sync.{mode}.pred {Pred(destination)}, " +
-                    $"{Pred(instruction.Operands[1])}, {mask};");
+                    $"{source}, {mask};");
                 return;
             }
             if (!destination.StartsWith("R", StringComparison.OrdinalIgnoreCase) ||
                 instruction.Operands.Count < 3)
                 throw new NotSupportedException(
                     $"SASS VOTE destination '{instruction.Operands[0]}' is not supported");
+            string ballotSource = VoteSource(instruction.Operands[2]);
             _lines.Add($"{prefix}vote.sync.ballot.b32 {Reg(destination)}, " +
-                $"{Pred(instruction.Operands[2])}, {mask};");
+                $"{ballotSource}, {mask};");
+        }
+
+        // VOTE predicates can be written negated (`VOTE.ANY R4, PT, !P2`),
+        // and ptxas uses that form for the __ballot_sync helper's flag.
+        // Pred() drops the '!', so materialise the inversion explicitly.
+        private string VoteSource(string operand)
+        {
+            string text = operand.Trim();
+            string pred = Pred(text);
+            if (!text.StartsWith("!", StringComparison.Ordinal))
+                return pred;
+            if (pred == "1")
+                return "0";
+            string inverted = $"%pt{_nextTempPred++}";
+            _lines.Add($"    not.pred {inverted}, {pred};");
+            return inverted;
         }
 
         private void EmitVoteU(SassInstruction instruction, string prefix)
