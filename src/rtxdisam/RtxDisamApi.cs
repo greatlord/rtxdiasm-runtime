@@ -39,7 +39,14 @@ public static class RtxDisamApi
         // SASS would be both slower and less faithful.  PTX-only fatbins
         // keep the previous behaviour; mixed fatbins now follow the same
         // JIT rule instead of unconditionally preferring an older cubin.
-        if ((output & RtxDisamOutput.Ptx) != 0 && FatbinFile.IsFatbin(data) &&
+        //
+        // ACUDA_RTXDISAM_PTX_FIRST=0 forces the cubin/SASS path even when
+        // the fatbin carries PTX.  Large PhysX modules compile far more
+        // cheaply per entry than as one multi-megabyte module.
+        bool preferPtx = Environment.GetEnvironmentVariable(
+            "ACUDA_RTXDISAM_PTX_FIRST") is not ("0" or "false" or "no");
+        if (preferPtx && (output & RtxDisamOutput.Ptx) != 0 &&
+            FatbinFile.IsFatbin(data) &&
             (!HasCubinMember(data) ||
              !HasExactCubinMember(data, selectionTarget ?? target)))
         {
