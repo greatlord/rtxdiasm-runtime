@@ -9335,8 +9335,14 @@ public static class SassToPtx
                 if (sourceType != null &&
                     sourceType != "U32" &&
                     sourceType != "S32")
-                    throw new NotSupportedException(
-                        $"SASS instruction '{instruction.Mnemonic}' is not supported");
+                {
+                    // Widening integer convert (I2I.S32.S8, I2I.U32.U16).
+                    _lines.Add($"{prefix}cvt." +
+                        $"{destinationType.ToLowerInvariant()}." +
+                        $"{sourceType.ToLowerInvariant()} " +
+                        $"{destination}, {source};");
+                    return;
+                }
                 _lines.Add($"{prefix}mov.b32 {destination}, {source};");
                 return;
             }
