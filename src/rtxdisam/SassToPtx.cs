@@ -1585,7 +1585,7 @@ public static class SassToPtx
             }
             _lines.AddRange(_functionTexts);
             string parameters = string.Join(", ",
-                _parameters.Select(p => $".param .{p.Type} {p.Name}"));
+                _parameters.Select(ParameterDeclaration));
             _lines.Add($".visible .entry {_entry}({parameters})");
             _lines.Add("{");
             if (_usesLocalFrame)
@@ -9445,7 +9445,7 @@ public static class SassToPtx
                 string sink1 = $"%rt{_nextTemp++}";
                 string sink2 = $"%rt{_nextTemp++}";
                 string sink3 = $"%rt{_nextTemp++}";
-                _lines.Add($"{prefix}tex.2d.v4.u32.u32 " +
+                _lines.Add($"{prefix}tex.2d.v4.u32.s32 " +
                     $"{{{sink0}, {sink1}, {sink2}, {sink3}}}, " +
                     $"[{texref}, {{{coordinate}, {zero}}}];");
                 return;
@@ -9454,7 +9454,7 @@ public static class SassToPtx
             if (vector)
             {
                 string registers = VectorRegs(destinationOperand, 4);
-                _lines.Add($"{prefix}tex.2d.v4.f32.u32 {registers}, " +
+                _lines.Add($"{prefix}tex.2d.v4.f32.s32 {registers}, " +
                     $"[{texref}, {{{coordinate}, {zero}}}];");
                 return;
             }
@@ -9463,7 +9463,7 @@ public static class SassToPtx
             string extra0 = $"%rt{_nextTemp++}";
             string extra1 = $"%rt{_nextTemp++}";
             string extra2 = $"%rt{_nextTemp++}";
-            _lines.Add($"{prefix}tex.2d.v4.u32.u32 " +
+            _lines.Add($"{prefix}tex.2d.v4.u32.s32 " +
                 $"{{{destination}, {extra0}, {extra1}, {extra2}}}, " +
                 $"[{texref}, {{{coordinate}, {zero}}}];");
         }
@@ -13896,7 +13896,7 @@ public static class SassToPtx
                 return $"[{inner}]";
             return offset > 0
                 ? $"[{inner}+0x{offset:x}]"
-                : $"[{inner}-0x{-offset:x}]";
+                : $"[{inner}+-0x{-offset:x}]";
         }
 
         private void EmitLocalLoad(SassInstruction instruction, string prefix)
@@ -17190,12 +17190,13 @@ public static class SassToPtx
         }
 
         // Formats a register base+offset operand.  Register-derived
-        // addresses keep an explicit `+0` (matches the established output).
+        // addresses keep an explicit `+0` (matches the established
+        // output).  PTX has no `[a-imm]` form: a negative displacement is
+        // still written as an addition (`[a+-0x4]`), which both ptxas and
+        // the in-tree parser accept.
         private static string RegAddr(string baseExpr, string offset)
         {
-            return offset.StartsWith("-", StringComparison.Ordinal)
-                ? $"[{baseExpr}{offset}]"
-                : $"[{baseExpr}+{offset}]";
+            return $"[{baseExpr}+{offset}]";
         }
 
         // Formats an absolute `__shared` base+offset operand; a zero
@@ -17204,9 +17205,7 @@ public static class SassToPtx
         {
             if (string.IsNullOrEmpty(offset) || offset == "0")
                 return $"[{baseExpr}]";
-            return offset.StartsWith("-", StringComparison.Ordinal)
-                ? $"[{baseExpr}{offset}]"
-                : $"[{baseExpr}+{offset}]";
+            return $"[{baseExpr}+{offset}]";
         }
 
         private string Address(string operand)
@@ -17582,6 +17581,20 @@ public static class SassToPtx
                 return 0;
             return int.TryParse(parameter.Type.AsSpan(prefix.Length),
                 out int n) && n >= 2 ? n : 0;
+        }
+
+        // PTX has no `.u64xN` type.  The lifter uses that spelling
+        // internally to mean "N consecutive 64-bit words", but nvcc
+        // declares by-value aggregates as byte arrays.  Emit the
+        // standard form so ptxas accepts the module as well as the
+        // in-tree parser (which understands both).
+        private string ParameterDeclaration(PtxParameter parameter)
+        {
+            int words = WideWords(parameter);
+            if (words == 0)
+                return $".param .{parameter.Type} {parameter.Name}";
+            int bytes = parameter.Size > 0 ? parameter.Size : words * 8;
+            return $".param .align 8 .b8 {parameter.Name}[{bytes}]";
         }
 
         private static PtxParameter ParamPart(PtxParameter parameter, int part)
