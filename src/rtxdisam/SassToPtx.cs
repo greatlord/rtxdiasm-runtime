@@ -8880,6 +8880,10 @@ public static class SassToPtx
                 case "ATOMS":
                     EmitAtom(instruction, Prefix());
                     return;
+                case "RED":
+                case "REDG":
+                    EmitRed(instruction, Prefix());
+                    return;
                 case "AND":
                     EmitBitwise(instruction, Prefix(), "and");
                     return;
@@ -15767,6 +15771,46 @@ public static class SassToPtx
             _lines.Add($"{prefix}atom.{space}.{mode}.{type} " +
                 $"{Reg(instruction.Operands[first])}, {address}, " +
                 $"{atomValue};");
+        }
+
+        private void EmitRed(SassInstruction instruction, string prefix)
+        {
+            if (instruction.Operands.Count < 2)
+                throw new NotSupportedException(
+                    $"SASS instruction '{instruction.Mnemonic}' needs an " +
+                    "address and a value");
+            string mnemonic = instruction.Mnemonic.ToUpperInvariant();
+            string mode = mnemonic.Contains(".ADD", StringComparison.Ordinal) ? "add"
+                : mnemonic.Contains(".INC", StringComparison.Ordinal) ? "inc"
+                : mnemonic.Contains(".DEC", StringComparison.Ordinal) ? "dec"
+                : mnemonic.Contains(".MIN", StringComparison.Ordinal) ? "min"
+                : mnemonic.Contains(".MAX", StringComparison.Ordinal) ? "max"
+                : mnemonic.Contains(".AND", StringComparison.Ordinal) ? "and"
+                : mnemonic.Contains(".OR", StringComparison.Ordinal) ? "or"
+                : mnemonic.Contains(".XOR", StringComparison.Ordinal) ? "xor"
+                : mnemonic.Contains(".EXCH", StringComparison.Ordinal) ? "exch"
+                : throw new NotSupportedException(
+                    $"SASS RED mode '{instruction.Mnemonic}' is not supported");
+            bool wide = mnemonic.Contains(".64", StringComparison.Ordinal) ||
+                mnemonic.Contains(".U64", StringComparison.Ordinal) ||
+                mnemonic.Contains(".S64", StringComparison.Ordinal);
+            // RED.ADD without a type suffix accumulates integers; RED.ADD.F32
+            // is the float form (PTX red.global.add.f32).
+            string type = wide ? "u64"
+                : mode is "and" or "or" or "xor" or "exch" ? "b32"
+                : mnemonic.Contains(".F32", StringComparison.Ordinal) ? "f32"
+                : mnemonic.Contains(".S32", StringComparison.Ordinal) ? "s32"
+                : "u32";
+            bool shared = mnemonic.StartsWith("REDS", StringComparison.Ordinal);
+            string space = shared ? "shared" : "global";
+            string address = shared
+                ? SharedAddress(instruction.Operands[0])
+                : Address(instruction.Operands[0]);
+            string value = wide
+                ? PackRegisterPair(instruction.Operands[1])
+                : Operand(instruction.Operands[1]);
+            _lines.Add($"{prefix}red.{space}.{mode}.{type} " +
+                $"{address}, {value};");
         }
 
         private void EmitAtomsCastSpin(
