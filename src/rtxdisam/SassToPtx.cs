@@ -15676,6 +15676,7 @@ public static class SassToPtx
                 : mnemonic.Contains(".OR", StringComparison.Ordinal) ? "or"
                 : mnemonic.Contains(".XOR", StringComparison.Ordinal) ? "xor"
                 : mnemonic.Contains(".EXCH", StringComparison.Ordinal) ? "exch"
+                : mnemonic.Contains(".CAS", StringComparison.Ordinal) ? "cas"
                 : throw new NotSupportedException(
                     $"SASS ATOM mode '{instruction.Mnemonic}' is not supported");
             if (mnemonic.Contains(".64", StringComparison.Ordinal) ||
@@ -15708,7 +15709,7 @@ public static class SassToPtx
                 UnpackPair64(old, destination, NextRegister(destination));
                 return;
             }
-            string type = mode is "and" or "or" or "xor" or "exch"
+            string type = mode is "and" or "or" or "xor" or "exch" or "cas"
                 ? "b32"
                 : mnemonic.Contains(".S32", StringComparison.Ordinal)
                     ? "s32" : "u32";
@@ -15728,6 +15729,32 @@ public static class SassToPtx
                 ? SharedAddress(instruction.Operands[first + 1])
                 : Address(instruction.Operands[first + 1]);
             string space = shared ? "shared" : "global";
+            if (mode == "cas")
+            {
+                // ATOMS.CAS Rd, [Ra], Rcompare, Rnew
+                // ptxas emits the same order as PTX atom.cas d, [a], b, c.
+                if (first + 3 >= instruction.Operands.Count)
+                    throw new NotSupportedException(
+                        $"SASS instruction '{instruction.Mnemonic}' needs an " +
+                        "address, a compare value and a new value");
+                string compare = Operand(instruction.Operands[first + 2]);
+                string replacement = Operand(instruction.Operands[first + 3]);
+                string casDestination = BaseReg(instruction.Operands[first]);
+                if (casDestination.Equals(
+                        "RZ", StringComparison.OrdinalIgnoreCase))
+                {
+                    // `red` has no cas form; the old value is still needed
+                    // as atom's destination, so drop it into a scratch.
+                    _lines.Add($"{prefix}atom.{space}.cas.{type} " +
+                        $"%rt{_nextTemp++}, {address}, {compare}, " +
+                        $"{replacement};");
+                    return;
+                }
+                _lines.Add($"{prefix}atom.{space}.cas.{type} " +
+                    $"{Reg(instruction.Operands[first])}, {address}, " +
+                    $"{compare}, {replacement};");
+                return;
+            }
             string atomValue = Operand(instruction.Operands[first + 2]);
             if (BaseReg(instruction.Operands[first]).Equals(
                     "RZ", StringComparison.OrdinalIgnoreCase))
