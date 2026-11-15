@@ -982,6 +982,28 @@ public static class InstructionDecoder
             return "." + sizeText;
         }
 
+        // Compare selectors (FSETP/FSET/DSETP/HSETP2) live in a 4-bit
+        // field that indexes the tail of the 6-bit "Test" space: selector
+        // 1..15 is Test[selector + 31] and 0 is the always-false F.  The
+        // 4-bit value never matches the enum on its own, which used to
+        // leak "???1" and made the lifter treat every float compare as EQ.
+        // Every entry was verified by patching the field of a real
+        // instruction and reading the result back from nvdisasm.
+        if (type == "Test")
+        {
+            IsaField? compareField = FindModField(cls, mod);
+            if (compareField != null && compareField.Width == 4)
+            {
+                long selector = GetFieldValue(cls, mod.Field, low, high);
+                if (selector == 0)
+                    return ".F";
+                string? compareText = EnumText("Test", selector + 31);
+                return compareText != null
+                    ? "." + compareText
+                    : ".???" + selector.ToString(CultureInfo.InvariantCulture);
+            }
+        }
+
         IsaField? modField = FindModField(cls, mod);
         if (modField != null && IsPreVoltaTable() &&
             OverlapsUsed(cls, modField))
