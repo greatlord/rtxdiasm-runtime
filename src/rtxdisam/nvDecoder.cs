@@ -694,6 +694,46 @@ public static class InstructionDecoder
         return null;
     }
 
+    // Table-valued selector fields that are not declared as kind="table".
+    // The legacy FORMAT grammar spells packed selectors as a call whose
+    // arguments name the flags they carry, for example
+    //   nAB = PSignFFMA(Ra@negate,Rb@negate)
+    // where the table maps the encoded value to one flag per argument.
+    // IsaField.Prepare only splits that form for kind="table", so these
+    // fields never reach GetTableFlag and their flags are silently lost.
+    private static long? GetTableExpressionFlag(
+        IsaClass cls, string? name, string suffix, ulong low, ulong high)
+    {
+        if (name == null) return null;
+        string key = name + "@" + suffix;
+
+        foreach (var field in cls.Fields)
+        {
+            if (field.Kind == "table") continue;
+            string expr = field.Expr;
+            int open = expr.IndexOf('(');
+            int close = expr.IndexOf(')', open + 1);
+            if (open <= 0 || close <= open) continue;
+
+            string[] args = expr[(open + 1)..close]
+                .Split(',', StringSplitOptions.TrimEntries |
+                    StringSplitOptions.RemoveEmptyEntries);
+            int index = Array.IndexOf(args, key);
+            if (index < 0) continue;
+
+            string tableName = expr[..open].Trim();
+            long raw = (long)GetBits(low, high, field.Segs);
+            if (Table.Tables.TryGetValue(tableName, out var map) &&
+                map.TryGetValue(raw.ToString(CultureInfo.InvariantCulture), out int[]? values) &&
+                index < values.Length)
+            {
+                return values[index];
+            }
+        }
+
+        return null;
+    }
+
     private static List<int[]> UsedSegments(
         IsaClass cls, bool includeFormatMods)
     {
@@ -1108,7 +1148,17 @@ public static class InstructionDecoder
             }
 
             long? tableValue = GetTableFlag(cls, baseField, suffix, low, high);
-            return tableValue.HasValue && tableValue.Value != 0;
+            if (tableValue.HasValue)
+                return tableValue.Value != 0;
+
+            // PSign-style selectors pack several markers into one field and
+            // name the ones they carry, e.g. FFMA's nAB is
+            // PSignFFMA(Ra@negate,Rb@negate).  They are plain var fields,
+            // so IsaField.Prepare leaves TableName/TableArgs empty and
+            // GetTableFlag never sees them.
+            long? expressionValue = GetTableExpressionFlag(
+                cls, baseField, suffix, low, high);
+            return expressionValue.HasValue && expressionValue.Value != 0;
         }
 
         var builder = new StringBuilder();
