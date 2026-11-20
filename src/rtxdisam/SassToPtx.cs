@@ -8918,6 +8918,9 @@ public static class SassToPtx
                     _lines.Add($"{Prefix()}mov.pred " +
                         $"{Pred(instruction.Operands[0])}, 0;");
                     return;
+                case "FCMP":
+                    EmitFcmp(instruction, Prefix());
+                    return;
                 case "FSETP":
                     EmitFsetp(instruction, Prefix());
                     return;
@@ -16694,6 +16697,44 @@ public static class SassToPtx
             // banks, and f64 immediates (e.g. |R14| and +INF, neither of
             // which is valid PTX text).
             return PackRegisterPair(text);
+        }
+
+        // FCMP compares its last source against zero and selects one of the
+        // two earlier sources:
+        //     FCMP.op[.FTZ] Rd, Ra, Rb, Rc   =>   Rd = (Rc op 0) ? Ra : Rb
+        // ptxas uses it for the branch-free acos/asin tail
+        // (`FCMP.LT.FTZ R2, R4, R5, R2` with R2 holding the input sign) and
+        // for float abs (`FCMP.LT R48, -R34, R34, R34`).
+        private void EmitFcmp(SassInstruction instruction, string prefix)
+        {
+            if (instruction.Operands.Count < 4)
+                throw new NotSupportedException(
+                    $"SASS instruction '{instruction.Mnemonic}' needs four operands");
+            string suffix = instruction.Mnemonic.ToUpperInvariant();
+            string comparison = suffix.Contains(".GEU") ? "geu"
+                : suffix.Contains(".GTU") ? "gtu"
+                : suffix.Contains(".LEU") ? "leu"
+                : suffix.Contains(".LTU") ? "ltu"
+                : suffix.Contains(".EQU") ? "equ"
+                : suffix.Contains(".NEU") ? "neu"
+                : suffix.Contains(".GE") ? "ge"
+                : suffix.Contains(".GT") ? "gt"
+                : suffix.Contains(".LE") ? "le"
+                : suffix.Contains(".LT") ? "lt"
+                : suffix.Contains(".EQ") ? "eq"
+                : suffix.Contains(".NE") ? "ne"
+                : suffix.Contains(".NUM") ? "num"
+                : suffix.Contains(".NAN") ? "nan"
+                : "eq";
+            string ftz = suffix.Contains(".FTZ") ? ".ftz" : "";
+            string whenTrue = FloatOperand(instruction.Operands[1]);
+            string whenFalse = FloatOperand(instruction.Operands[2]);
+            string compared = FloatOperand(instruction.Operands[3]);
+            string predicate = $"%pt{_nextTempPred++}";
+            _lines.Add($"setp.{comparison}{ftz}.f32 " +
+                $"{predicate}, {compared}, 0f00000000;");
+            _lines.Add($"{prefix}selp.b32 {Reg(instruction.Operands[0])}, " +
+                $"{whenTrue}, {whenFalse}, {predicate};");
         }
 
         private void EmitFsetp(SassInstruction instruction, string prefix)
